@@ -133,25 +133,32 @@ function drawGraph(labels, values) {
 function renderWordCloud(wordData) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const allTotal = Object.values(wordData || {}).reduce((a, b) => a + b, 0);
-  document.getElementById("totalCount").textContent = allTotal;
-
-  const entries = Object.entries(wordData || {})
+  const entries = Object.entries(wordData)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
+  // if no triggers, show a message in the center and set total count to 0
   if (!entries.length) {
     ctx.font = "14px -apple-system, sans-serif";
     ctx.fillStyle = "#8E8E93";
     ctx.textAlign = "center";
     ctx.fillText("No triggers this session", canvas.width / 2, canvas.height / 2);
+    document.getElementById("totalCount").textContent = 0;
     return;
   }
 
+  // calculate total count for the session and display it
+  // then render each word with size proportional to its count
+  const total = entries.reduce((sum, [, c]) => sum + c, 0);
+  document.getElementById("totalCount").textContent = total;
+
+  // determine the maximum count to scale font sizes, set a base size and increase it based on relative count
   const max = entries[0][1];
   const centerX = canvas.width / 2;
   let y = 60;
 
+  // render each word in the cloud, increasing font size based on count relative to max, 
+  // spacing them vertically
   entries.forEach(([word, count]) => {
     const size = 16 + (count / max) * 30;
     ctx.font = `600 ${size}px -apple-system, sans-serif`;

@@ -6,108 +6,26 @@ const TRIGGERS = {
   phrases: ["kill myself", "end my life"]
 };
 
-// highlight style for the triggers
+// highlight style for the triggers, can be tweaked or made dynamic based on severity
 const HIGHLIGHT_TEXT =
   `color:#ff3b30; font-weight:700; background:rgba(255,59,48,0.18);` +
   `padding:0 3px; border-radius:5px; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
 
+//
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// 
 function safeJSONParse(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
-}
-
-function tmsHash(str) {
-  // tiny stable hash (fast, good enough for de-dup)
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(16);
-}
-
-function getMessageKey(msg) {
-  // Try to find a stable id from the DOM (best case)
-  const carrier =
-    msg.closest("[data-message-id]") ||
-    msg.closest("[data-testid]") ||
-    msg;
-
-  const msgId =
-    carrier.getAttribute?.("data-message-id") ||
-    carrier.getAttribute?.("data-testid") ||
-    msg.getAttribute?.("data-message-id");
-
-  if (msgId) return `id:${msgId}`;
-
-  // Fallback: hash the text (works even if node is recreated)
-  const text = (msg.innerText || "").trim();
-  return `hash:${tmsHash(text)}`;
-}
-
-function wasAlreadyCounted(key) {
-  const raw = sessionStorage.getItem("tms_seenMessageKeys") || "[]";
-  const arr = safeJSONParse(raw, []);
-  return arr.includes(key);
-}
-
-function markCounted(key) {
-  const raw = sessionStorage.getItem("tms_seenMessageKeys") || "[]";
-  const arr = safeJSONParse(raw, []);
-  if (!arr.includes(key)) arr.push(key);
-  sessionStorage.setItem("tms_seenMessageKeys", JSON.stringify(arr));
 }
 
 // single instance with dynamic content update + timer reset
 let popupTimer = null;
 
-function ensurePopupStyles() {
-  if (document.getElementById("tms-popup-style")) return;
-
-  const style = document.createElement("style");
-  style.id = "tms-popup-style";
-  style.innerHTML = `
-    .tms-popup-box {
-      position: fixed;
-      top: 80px;
-      left: 24px;
-      width: 360px;
-      max-width: calc(100vw - 48px);
-      padding: 16px 20px 20px 20px;
-      border-radius: 18px;
-      font-family: system-ui, -apple-system, sans-serif;
-      color: white;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.18);
-      z-index: 999999;
-      animation: tmsSlideIn 0.25s ease forwards;
-      overflow: hidden;
-    }
-    .tms-popup-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; margin-top:-2px; }
-    .tms-popup-close { cursor:pointer; font-size:20px; font-weight:600; padding:4px 8px; border-radius:6px; transition:background 0.2s ease; }
-    .tms-popup-close:hover { background: rgba(255,255,255,0.2); }
-    .tms-popup-body { margin-top:12px; font-size:14px; }
-    .tms-popup-expand { margin-top:12px; font-size:13px; cursor:pointer; opacity:0.9; }
-    .tms-popup-details { max-height:0; overflow:hidden; transition:max-height 0.3s ease; margin-top:10px; font-size:13px; }
-    .tms-popup-details.open { max-height:200px; }
-    .tms-popup-snippet { background: rgba(255,255,255,0.15); padding:6px; border-radius:8px; word-break:break-word; }
-    .tms-popup-progress {
-      position:absolute; bottom:0; left:0; height:4px; width:100%;
-      background: rgba(255,255,255,0.4);
-      animation: tmsCountdown 8s linear forwards;
-    }
-    @keyframes tmsSlideIn { from { opacity:0; transform:translateX(-12px);} to { opacity:1; transform:translateX(0);} }
-    @keyframes tmsCountdown { from { width:100%; } to { width:0%; } }
-  `;
-  document.head.appendChild(style);
-}
-
 // function to update the popup with session totals and matched words
 function showPopup(sessionTotalHits, lastMatchedWords) {
-  ensurePopupStyles();
-
   let severity = "low";
   let color = "#e53935";
   let title = "Trigger detected";
@@ -126,10 +44,12 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
     ? "Triggers detected in session"
     : "Trigger detected in session";
 
+// turn matched words into a readable list (limit to 5)
   const wordList = lastMatchedWords.join(", ");
   const nowTime = new Date().toLocaleTimeString();
 
-  const existing = document.getElementById("tms-trigger-popup");
+  // if popup exists, update it
+  const existing = document.getElementById("trigger-popup");
   if (existing) {
     existing.querySelector("#tp-title").textContent = `⚠ ${title}`;
     existing.querySelector("#tp-severity").textContent = severity.toUpperCase();
@@ -138,131 +58,162 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
     existing.querySelector("#tp-words").textContent = wordList;
     existing.querySelector("#tp-time").textContent = nowTime;
 
-    existing.querySelector(".tms-popup-box").style.background = color;
+    // update background color (severity)
+    existing.querySelector(".trigger-box").style.background = color;
 
-    const bar = existing.querySelector(".tms-popup-progress");
+    // restart countdown bar + timer
+    const bar = existing.querySelector(".trigger-progress");
     const newBar = bar.cloneNode(true);
     bar.parentNode.replaceChild(newBar, bar);
 
     if (popupTimer) clearTimeout(popupTimer);
     popupTimer = setTimeout(() => existing.remove(), 8000);
+
     return;
   }
 
   const popup = document.createElement("div");
-  popup.id = "tms-trigger-popup";
+  popup.id = "trigger-popup";
 
+  // initial content, will be updated if popup already exists
   popup.innerHTML = `
-    <div class="tms-popup-box" style="background:${color};">
-      <div class="tms-popup-header">
+    <div class="trigger-box" style="background:${color};">
+      <div class="trigger-header">
         <div id="tp-title">⚠ ${title}</div>
-        <div class="tms-popup-close">×</div>
+        <div class="trigger-close">×</div>
       </div>
 
-      <div class="tms-popup-body">
+      <div class="trigger-body">
         Severity: <strong id="tp-severity">${severity.toUpperCase()}</strong><br>
         Session triggers: <strong id="tp-count">${sessionTotalHits}</strong>
       </div>
 
-      <div class="tms-popup-expand">View details ▾</div>
+      <div class="trigger-expand">View details ▾</div>
 
-      <div class="tms-popup-details">
-        <div class="tms-popup-snippet">
+      <div class="trigger-details">
+        <div class="trigger-snippet">
           <span id="tp-detailText">${detailText}</span>: <strong id="tp-words">${wordList}</strong>
         </div>
         <div style="margin-top:6px;font-size:12px;" id="tp-time">${nowTime}</div>
       </div>
 
-      <div class="tms-popup-progress"></div>
+      <div class="trigger-progress"></div>
     </div>
   `;
 
+  // basic styles + animations, can be moved to CSS file
+  const style = document.createElement("style");
+  style.innerHTML = `
+    .trigger-box {
+      position: fixed;
+      top: 80px;
+      left: 24px;
+      width: 360px;
+      padding: 16px 20px 20px 20px;
+      border-radius: 18px;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: white;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+      z-index: 999999;
+      animation: slideIn 0.25s ease forwards;
+      overflow: hidden;
+    }
+    .trigger-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; margin-top:-2px; }
+    .trigger-close { cursor:pointer; font-size:20px; font-weight:600; padding:4px 8px; border-radius:6px; transition:background 0.2s ease; }
+    .trigger-close:hover { background: rgba(255,255,255,0.2); }
+    .trigger-body { margin-top:12px; font-size:14px; }
+    .trigger-expand { margin-top:12px; font-size:13px; cursor:pointer; opacity:0.9; }
+    .trigger-details { max-height:0; overflow:hidden; transition:max-height 0.3s ease; margin-top:10px; font-size:13px; }
+    .trigger-details.open { max-height:200px; }
+    .trigger-snippet { background: rgba(255,255,255,0.15); padding:6px; border-radius:8px; word-break:break-word; }
+    .trigger-progress {
+      position:absolute; bottom:0; left:0; height:4px; width:100%;
+      background: rgba(255,255,255,0.4);
+      animation: countdown 8s linear forwards;
+    }
+    @keyframes slideIn { from { opacity:0; transform:translateX(-12px);} to { opacity:1; transform:translateX(0);} }
+    @keyframes countdown { from { width:100%; } to { width:0%; } }
+  `;
+
+  document.head.appendChild(style);
   document.body.appendChild(popup);
 
-  popup.querySelector(".tms-popup-close").onclick = () => {
+  // event listeners for close and expand
+  popup.querySelector(".trigger-close").onclick = () => {
     popup.remove();
     if (popupTimer) clearTimeout(popupTimer);
     popupTimer = null;
   };
-
-  popup.querySelector(".tms-popup-expand").onclick = () =>
-    popup.querySelector(".tms-popup-details").classList.toggle("open");
+  popup.querySelector(".trigger-expand").onclick = () =>
+    popup.querySelector(".trigger-details").classList.toggle("open");
 
   popupTimer = setTimeout(() => popup.remove(), 8000);
 }
 
-// detect triggers in text, return total hits, matched terms, and per-term counts
+// detect triggers in text, return count and matched words
 function detectTriggers(text) {
   const lower = text.toLowerCase();
   let hits = 0;
+  let matchedWords = [];
 
-  // term -> occurrences in this message
-  const termCounts = {};
-
-  // phrases
+  // check phrases first (longer, more specific)
   TRIGGERS.phrases.forEach(p => {
     const phrase = p.toLowerCase();
-    const re = new RegExp(escapeRegex(phrase), "g");
-    const m = lower.match(re);
-    const count = m ? m.length : 0;
-    if (count > 0) {
-      termCounts[p] = (termCounts[p] || 0) + count;
-      hits += count;
+    if (lower.includes(phrase)) {
+      // count occurrences of the phrase, not just 1 per phrase
+      const re = new RegExp(escapeRegex(phrase), "g");
+      const m = lower.match(re);
+      if (m) hits += m.length;
+      matchedWords.push(p);
     }
   });
 
-  // words
+  // check individual words with word boundary regex
   TRIGGERS.words.forEach(w => {
-    const re = new RegExp(`\\b${escapeRegex(w)}\\b`, "gi");
-    const m = text.match(re);
-    const count = m ? m.length : 0;
-    if (count > 0) {
-      termCounts[w] = (termCounts[w] || 0) + count;
-      hits += count;
+    const regex = new RegExp(`\\b${escapeRegex(w)}\\b`, "gi");
+    const matches = text.match(regex);
+    if (matches) {
+      hits += matches.length;          
+      matchedWords.push(w);
     }
   });
-
-  const matchedWords = Object.keys(termCounts);
-  return { hits, matchedWords, termCounts };
+  // deduplicate matched words for display
+  return { hits, matchedWords: [...new Set(matchedWords)] };
 }
 
-/*
-  STORAGE
-  - dailyCounts -> chrome.storage.local (for trends)
-  - sessionTriggers -> window.sessionStorage (resets when tab closes)
-*/
-function updateStorage(hits, matchedTerms, termCounts) {
+  // STORAGE
+  // - dailyCounts -> chrome.storage.local (for trends)
+  // - sessionTriggers -> window.sessionStorage (resets when tab closes)
+function updateStorage(hits, words) {
   if (hits === 0) return;
 
   const today = new Date().toISOString().split("T")[0];
   const now = Date.now();
   const SESSION_TIMEOUT = 30 * 60 * 1000;
 
+  // per-tab session store
   const last = Number(sessionStorage.getItem("tms_lastTriggerTime") || "0");
   let sessionTriggers = safeJSONParse(sessionStorage.getItem("tms_sessionTriggers") || "{}", {});
   let sessionTotalHits = Number(sessionStorage.getItem("tms_sessionTotalHits") || "0");
 
   if (now - last > SESSION_TIMEOUT) {
-  sessionTriggers = {};
-  sessionTotalHits = 0;
-
-  // reset de-dup for a new session window
-  sessionStorage.removeItem("tms_seenMessageKeys");
-}
-
-  // total occurrences
+    sessionTriggers = {};
+    sessionTotalHits = 0;
+  }
   sessionTotalHits += hits;
 
-  // per-term occurrences (NOT +1)
-  Object.entries(termCounts).forEach(([term, count]) => {
-    sessionTriggers[term] = (sessionTriggers[term] || 0) + count;
+  // keep a word list breakdown of the session hits for more detailed popup info
+  words.forEach(word => {
+    sessionTriggers[word] = (sessionTriggers[word] || 0) + 1;
   });
 
+  // store updated session data
   sessionStorage.setItem("tms_sessionTriggers", JSON.stringify(sessionTriggers));
   sessionStorage.setItem("tms_sessionTotalHits", String(sessionTotalHits));
   sessionStorage.setItem("tms_lastTriggerTime", String(now));
 
-  showPopup(sessionTotalHits, matchedTerms);
+  // show popup with total
+  showPopup(sessionTotalHits, words);
 
   // persistent daily trends
   chrome.storage.local.get(["dailyCounts"], res => {
@@ -270,42 +221,46 @@ function updateStorage(hits, matchedTerms, termCounts) {
     daily[today] = (daily[today] || 0) + hits;
     chrome.storage.local.set({ dailyCounts: daily });
   });
-
-  // persistent daily term counts (occurrences)
   chrome.storage.local.get(["dailyWordCounts"], res => {
-    const dailyWordCounts = res.dailyWordCounts || {};
-    if (!dailyWordCounts[today]) dailyWordCounts[today] = {};
+  const dailyWordCounts = res.dailyWordCounts || {};
+  
+  if (!dailyWordCounts[today]) {
+    dailyWordCounts[today] = {};
+  }
 
-    Object.entries(termCounts).forEach(([term, count]) => {
-      dailyWordCounts[today][term] = (dailyWordCounts[today][term] || 0) + count;
-    });
-
-    chrome.storage.local.set({ dailyWordCounts });
+  words.forEach(word => {
+    dailyWordCounts[today][word] =
+      (dailyWordCounts[today][word] || 0) + 1;
   });
 
-  // keep session snapshot for dashboard
-  chrome.storage.local.set({
-    activeSession: {
-      totalHits: sessionTotalHits,
-      words: sessionTriggers
-    }
-  });
+  chrome.storage.local.set({ dailyWordCounts });
+});
+// also save session data to local storage for popup access 
+// (can be optimized to only save when popup is shown or on unload)
+chrome.storage.local.set({
+  activeSession: {
+    totalHits: sessionTotalHits,
+    words: sessionTriggers
+  }
+});
 }
-
-// highlighting
+// highlighting (wrap matched words in a span with styles)
 function highlight(element) {
   if (element.dataset.highlighted) return;
 
+  // get all text nodes under the element
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
   const textNodes = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode);
 
+  // create a combined regex for all triggers (sentences and words) to minimize DOM manipulations
   const allPatterns = [
     ...TRIGGERS.phrases.map(p => escapeRegex(p)),
     ...TRIGGERS.words.map(w => `\\b${escapeRegex(w)}\\b`)
   ];
   const combinedRegex = new RegExp(`(${allPatterns.join("|")})`, "gi");
 
+  // loop through text nodes and wrap matches, skip if inside code/pre tags to avoid breaking formatting
   textNodes.forEach(node => {
     if (node.parentElement?.closest("code, pre")) return;
 
@@ -325,42 +280,38 @@ function highlight(element) {
   element.dataset.highlighted = "true";
 }
 
-// main scanning function
+// main scanning function, processes each user message and updates storage + highlights
 function processMessage(msg) {
-  const key = getMessageKey(msg);
-
-  // IMPORTANT: de-dup survives React re-renders
-  if (wasAlreadyCounted(key)) return;
+  if (msg.dataset.scanned) return;
 
   const result = detectTriggers(msg.innerText);
 
   if (result.hits > 0) {
     highlight(msg);
-    updateStorage(result.hits, result.matchedWords, result.termCounts);
-
-    // Only mark as counted if we actually counted it
-    markCounted(key);
-  } else {
-    // Still mark so we don't keep re-processing the same message forever
-    markCounted(key);
+    updateStorage(result.hits, result.matchedWords);
   }
+
+  msg.dataset.scanned = "true";
 }
 
+// initial scan and setup mutation observer for dynamic content
 function scan() {
   const userMessages = document.querySelectorAll('[data-message-author-role="user"]');
   userMessages.forEach(processMessage);
 }
 
+// debounce the scan function to avoid excessive processing during rapid DOM changes (like loading new messages)
 let debounceTimer;
 const observer = new MutationObserver(() => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(scan, 300);
 });
 
+// observe the entire body for changes (can be optimized to specific containers, if needed)
 observer.observe(document.body, { childList: true, subtree: true });
 scan();
 
-// cleanup session snapshot on tab close
-window.addEventListener("pagehide", () => {
+// cleanup session data on tab close to prevent old data when user returns later
+window.addEventListener("beforeunload", () => {
   chrome.storage.local.remove("activeSession");
 });
