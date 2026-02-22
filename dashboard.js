@@ -9,10 +9,7 @@ const ctx = canvas.getContext("2d");
 canvas.width = 348;
 canvas.height = 220;
 
-/* ---------------------------------- */
-/* THEME SYSTEM */
-/* ---------------------------------- */
-
+// apply saved theme on load and set up toggle button
 function applyTheme(theme) {
   const html = document.documentElement;
 
@@ -24,12 +21,13 @@ function applyTheme(theme) {
     document.getElementById("themeToggle").textContent = "⏾";
   }
 
-  // Re-render current view
+  // re-render the current view
   if (currentView === "Weekly") loadWeekly();
   if (currentView === "Monthly") loadMonthly();
   if (currentView === "Session") loadSession();
 }
 
+// toggle theme and save preference
 document.getElementById("themeToggle").addEventListener("click", () => {
   chrome.storage.local.get(["theme"], res => {
     const current = res.theme === "dark" ? "dark" : "light";
@@ -38,15 +36,13 @@ document.getElementById("themeToggle").addEventListener("click", () => {
   });
 });
 
-/* ---------------------------------- */
-/* UTIL UI */
-/* ---------------------------------- */
-
+// show/hide daily average block based on view
 function toggleDailyAverage(show) {
   const avgBlock = document.getElementById("avgCount").closest(".stat-block");
   avgBlock.style.display = show ? "block" : "none";
 }
 
+// update active state of nav buttons
 function setActiveButton(view) {
   ["weekly", "monthly", "session"].forEach(id => {
     document.getElementById(id).classList.remove("active");
@@ -54,16 +50,14 @@ function setActiveButton(view) {
   document.getElementById(view.toLowerCase()).classList.add("active");
 }
 
+// helper to format date as the universal format
 function formatDMY(date) {
   const d = String(date.getDate()).padStart(2, "0");
   const m = String(date.getMonth() + 1).padStart(2, "0");
   return `${d}/${m}/${date.getFullYear()}`;
 }
 
-/* ---------------------------------- */
-/* GRAPH */
-/* ---------------------------------- */
-
+// draw line graph for weekly/monthly views, with grid lines and labels
 function drawGraph(labels, values) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -73,9 +67,11 @@ function drawGraph(labels, values) {
   const max = Math.max(...values, 1);
   const step = values.length > 1 ? w / (values.length - 1) : 0;
 
+  // draw horizontal grid lines
   ctx.strokeStyle = getComputedStyle(document.documentElement)
     .getPropertyValue("--separator");
 
+  // 4 lines for 0%, 25%, 50%, 75%
   ctx.lineWidth = 1;
   for (let g = 0; g <= 4; g++) {
     const y = padT + (h / 4) * g;
@@ -85,11 +81,13 @@ function drawGraph(labels, values) {
     ctx.stroke();
   }
 
+  // calculate points for the line graph based on values and max, handle single value case by centering it
   const pts = values.map((v, i) => ({
     x: values.length === 1 ? padL + w / 2 : padL + step * i,
     y: padT + h - (v / max) * h
   }));
 
+  // draw the line graph if we have more than 1 point, otherwise just show the single point
   if (pts.length > 1) {
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -99,6 +97,7 @@ function drawGraph(labels, values) {
     ctx.stroke();
   }
 
+  // draw points on the graph
   pts.forEach(p => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI);
@@ -108,6 +107,7 @@ function drawGraph(labels, values) {
 
   ctx.textAlign = "center";
 
+  // draw labels for each point, showing day and date if available
   pts.forEach((p, i) => {
     const lbl = labels[i];
     if (lbl.day) {
@@ -122,16 +122,14 @@ function drawGraph(labels, values) {
     }
   });
 
+  // update total and average counts below the graph
   const total = values.reduce((a, b) => a + b, 0);
   document.getElementById("totalCount").textContent = total;
   document.getElementById("avgCount").textContent =
     values.length ? (total / values.length).toFixed(1) : 0;
 }
 
-/* ---------------------------------- */
-/* WORD CLOUD */
-/* ---------------------------------- */
-
+// render a simple word cloud for the session view, showing top 5 triggers with size based on count
 function renderWordCloud(wordData) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -139,6 +137,7 @@ function renderWordCloud(wordData) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
+  // if no triggers, show a message in the center and set total count to 0
   if (!entries.length) {
     ctx.font = "14px -apple-system, sans-serif";
     ctx.fillStyle = "#8E8E93";
@@ -148,13 +147,18 @@ function renderWordCloud(wordData) {
     return;
   }
 
+  // calculate total count for the session and display it
+  // then render each word with size proportional to its count
   const total = entries.reduce((sum, [, c]) => sum + c, 0);
   document.getElementById("totalCount").textContent = total;
 
+  // determine the maximum count to scale font sizes, set a base size and increase it based on relative count
   const max = entries[0][1];
   const centerX = canvas.width / 2;
   let y = 60;
 
+  // render each word in the cloud, increasing font size based on count relative to max, 
+  // spacing them vertically
   entries.forEach(([word, count]) => {
     const size = 16 + (count / max) * 30;
     ctx.font = `600 ${size}px -apple-system, sans-serif`;
@@ -165,10 +169,8 @@ function renderWordCloud(wordData) {
   });
 }
 
-/* ---------------------------------- */
-/* WEEKLY */
-/* ---------------------------------- */
-
+// calculate the current week's date range based on the offset, 
+// return arrays of day labels and dates for graphing
 function getCurrentWeek(offset = 0) {
   const now = new Date();
   now.setDate(now.getDate() - offset * 7);
@@ -186,6 +188,7 @@ function getCurrentWeek(offset = 0) {
   const labels = [];
   const weekNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+  // loop through the week and create labels for each day, showing the day name and date
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
@@ -193,6 +196,7 @@ function getCurrentWeek(offset = 0) {
     labels.push({ day: weekNames[i], date: String(d.getDate()).padStart(2, "0") });
   }
 
+  // update the period label to show the current week's date range
   const range = `${formatDMY(monday)} – ${formatDMY(sunday)}`;
   document.getElementById("periodLabel").textContent = range;
   document.getElementById("navPeriodLabel").textContent = range;
@@ -200,6 +204,7 @@ function getCurrentWeek(offset = 0) {
   return { days, labels };
 }
 
+// load weekly data from storage, prepare it for graphing and export, then draw the graph
 function loadWeekly() {
   currentView = "Weekly";
   setActiveButton("Weekly");
@@ -220,10 +225,8 @@ function loadWeekly() {
   });
 }
 
-/* ---------------------------------- */
-/* MONTHLY */
-/* ---------------------------------- */
-
+// calculate the current month's date range based on the offset,
+// return arrays of day labels and dates for graphing, with options to show day numbers at certain intervals
 function getCurrentMonth(offset = 0) {
   const base = new Date();
   base.setMonth(base.getMonth() - offset, 1);
@@ -239,6 +242,8 @@ function getCurrentMonth(offset = 0) {
   const labels = [];
   const numDays = last.getDate();
 
+  // loop through the month and create labels for each day
+  // showing the day number at certain intervals to avoid clutter
   for (let i = 1; i <= numDays; i++) {
     const d = new Date(year, month, i);
     days.push(d.toISOString().split("T")[0]);
@@ -246,6 +251,7 @@ function getCurrentMonth(offset = 0) {
     labels.push({ day: show ? String(i) : "", date: "" });
   }
 
+  // update the period label to show the current month and year
   document.getElementById("periodLabel").textContent =
     `${String(month + 1).padStart(2,"0")}/${year}`;
   document.getElementById("navPeriodLabel").textContent =
@@ -254,12 +260,16 @@ function getCurrentMonth(offset = 0) {
   return { days, labels };
 }
 
+// load monthly data from storage, prepare it for graphing and export, then draw the graph
 function loadMonthly() {
   currentView = "Monthly";
   setActiveButton("Monthly");
   toggleDailyAverage(true);
   document.querySelector(".week-nav").style.display = "flex";
 
+  // get daily counts from storage
+  // extract the relevant days for the current month
+  // and prepare data for graphing and export
   chrome.storage.local.get(["dailyCounts"], res => {
     const data = res.dailyCounts || {};
     const month = getCurrentMonth(monthOffset);
@@ -274,10 +284,7 @@ function loadMonthly() {
   });
 }
 
-/* ---------------------------------- */
-/* SESSION */
-/* ---------------------------------- */
-
+// load session data from storage, prepare it for the word cloud and export, then render the cloud
 function loadSession() {
   currentView = "Session";
   setActiveButton("Session");
@@ -300,10 +307,7 @@ function loadSession() {
   });
 }
 
-/* ---------------------------------- */
-/* EXPORT */
-/* ---------------------------------- */
-
+// export the current view's data as a CSV file, with different formats for session vs weekly/monthly data
 function exportCSV() {
   if (!currentExportData || !currentExportData.rows.length) {
     alert("No data to export.");
@@ -312,6 +316,7 @@ function exportCSV() {
 
   let csv = "";
 
+  // for session data, export word and count, for weekly/monthly export date and count
   if (currentExportData.type === "session") {
     csv += "Word,Count\n";
     currentExportData.rows.forEach(r => {
@@ -324,6 +329,8 @@ function exportCSV() {
     });
   }
 
+  // create a blob from the CSV string and trigger a download 
+  // with a filename that includes the view type and timestamp
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
 
@@ -337,10 +344,8 @@ function exportCSV() {
 
 document.getElementById("pdf").addEventListener("click", exportCSV);
 
-/* ---------------------------------- */
-/* NAV BUTTONS */
-/* ---------------------------------- */
-
+// set up navigation buttons to load the corresponding views 
+// and reset offsets when switching between weekly and monthly
 document.getElementById("weekly").onclick = () => { weekOffset = 0; loadWeekly(); };
 document.getElementById("monthly").onclick = () => { monthOffset = 0; loadMonthly(); };
 document.getElementById("session").onclick = () => { loadSession(); };
@@ -355,10 +360,7 @@ document.getElementById("nextWeek").onclick = () => {
   else if (currentView === "Monthly" && monthOffset > 0) { monthOffset--; loadMonthly(); }
 };
 
-/* ---------------------------------- */
-/* INIT */
-/* ---------------------------------- */
-
+// on load, apply the saved theme and load the default weekly view
 chrome.storage.local.get(["theme"], res => {
   applyTheme(res.theme === "dark" ? "dark" : "light");
 });

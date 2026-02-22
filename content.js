@@ -1,33 +1,30 @@
-console.log("Trigger monitoring system running.");
+console.log("Sentinel running!");
 
-/* -----------------------------
-   CONFIG
------------------------------ */
+// triggers - expandable list, can be moved to separate JSON or storage later
 const TRIGGERS = {
   words: ["suicide", "self-harm"],
   phrases: ["kill myself", "end my life"]
 };
 
-const HIGHLIGHT_STYLE =
+// highlight style for the triggers, can be tweaked or made dynamic based on severity
+const HIGHLIGHT_TEXT =
   `color:#ff3b30; font-weight:700; background:rgba(255,59,48,0.18);` +
   `padding:0 3px; border-radius:5px; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
 
-/* -----------------------------
-   UTIL
------------------------------ */
+//
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// 
 function safeJSONParse(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
 }
 
-/* -----------------------------
-   POPUP SYSTEM (Original UI)
------------------------------ */
+// single instance with dynamic content update + timer reset
 let popupTimer = null;
 
+// function to update the popup with session totals and matched words
 function showPopup(sessionTotalHits, lastMatchedWords) {
   let severity = "low";
   let color = "#e53935";
@@ -47,10 +44,11 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
     ? "Triggers detected in session"
     : "Trigger detected in session";
 
+// turn matched words into a readable list (limit to 5)
   const wordList = lastMatchedWords.join(", ");
   const nowTime = new Date().toLocaleTimeString();
 
-  // If popup exists, just update it (don't block)
+  // if popup exists, update it
   const existing = document.getElementById("trigger-popup");
   if (existing) {
     existing.querySelector("#tp-title").textContent = `⚠ ${title}`;
@@ -77,6 +75,7 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
   const popup = document.createElement("div");
   popup.id = "trigger-popup";
 
+  // initial content, will be updated if popup already exists
   popup.innerHTML = `
     <div class="trigger-box" style="background:${color};">
       <div class="trigger-header">
@@ -102,7 +101,7 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
     </div>
   `;
 
-  // keep your same CSS injection (unchanged)
+  // basic styles + animations, can be moved to CSS file
   const style = document.createElement("style");
   style.innerHTML = `
     .trigger-box {
@@ -139,6 +138,7 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
   document.head.appendChild(style);
   document.body.appendChild(popup);
 
+  // event listeners for close and expand
   popup.querySelector(".trigger-close").onclick = () => {
     popup.remove();
     if (popupTimer) clearTimeout(popupTimer);
@@ -150,18 +150,17 @@ function showPopup(sessionTotalHits, lastMatchedWords) {
   popupTimer = setTimeout(() => popup.remove(), 8000);
 }
 
-/* -----------------------------
-   DETECTION
------------------------------ */
+// detect triggers in text, return count and matched words
 function detectTriggers(text) {
   const lower = text.toLowerCase();
   let hits = 0;
   let matchedWords = [];
 
+  // check phrases first (longer, more specific)
   TRIGGERS.phrases.forEach(p => {
     const phrase = p.toLowerCase();
     if (lower.includes(phrase)) {
-      // conta ocorrências da frase (não só 1)
+      // count occurrences of the phrase, not just 1 per phrase
       const re = new RegExp(escapeRegex(phrase), "g");
       const m = lower.match(re);
       if (m) hits += m.length;
@@ -169,23 +168,22 @@ function detectTriggers(text) {
     }
   });
 
+  // check individual words with word boundary regex
   TRIGGERS.words.forEach(w => {
     const regex = new RegExp(`\\b${escapeRegex(w)}\\b`, "gi");
     const matches = text.match(regex);
     if (matches) {
-      hits += matches.length;          // ✅ ocorrências reais
+      hits += matches.length;          
       matchedWords.push(w);
     }
   });
-
+  // deduplicate matched words for display
   return { hits, matchedWords: [...new Set(matchedWords)] };
 }
 
-/* -----------------------------
-   STORAGE
-   - dailyCounts -> chrome.storage.local (for trends)
-   - sessionTriggers -> window.sessionStorage (per-tab, resets when tab closes)
------------------------------ */
+  // STORAGE
+  // - dailyCounts -> chrome.storage.local (for trends)
+  // - sessionTriggers -> window.sessionStorage (resets when tab closes)
 function updateStorage(hits, words) {
   if (hits === 0) return;
 
@@ -202,20 +200,19 @@ function updateStorage(hits, words) {
     sessionTriggers = {};
     sessionTotalHits = 0;
   }
-
-  // ✅ add real hits, not 1-per-word
   sessionTotalHits += hits;
 
-  // keep a word list breakdown (optional, still useful)
+  // keep a word list breakdown of the session hits for more detailed popup info
   words.forEach(word => {
     sessionTriggers[word] = (sessionTriggers[word] || 0) + 1;
   });
 
+  // store updated session data
   sessionStorage.setItem("tms_sessionTriggers", JSON.stringify(sessionTriggers));
   sessionStorage.setItem("tms_sessionTotalHits", String(sessionTotalHits));
   sessionStorage.setItem("tms_lastTriggerTime", String(now));
 
-  // show popup with correct total
+  // show popup with total
   showPopup(sessionTotalHits, words);
 
   // persistent daily trends
@@ -238,6 +235,8 @@ function updateStorage(hits, words) {
 
   chrome.storage.local.set({ dailyWordCounts });
 });
+// also save session data to local storage for popup access 
+// (can be optimized to only save when popup is shown or on unload)
 chrome.storage.local.set({
   activeSession: {
     totalHits: sessionTotalHits,
@@ -245,23 +244,23 @@ chrome.storage.local.set({
   }
 });
 }
-
-/* -----------------------------
-   HIGHLIGHTING
------------------------------ */
+// highlighting (wrap matched words in a span with styles)
 function highlight(element) {
   if (element.dataset.highlighted) return;
 
+  // get all text nodes under the element
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
   const textNodes = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode);
 
+  // create a combined regex for all triggers (sentences and words) to minimize DOM manipulations
   const allPatterns = [
     ...TRIGGERS.phrases.map(p => escapeRegex(p)),
     ...TRIGGERS.words.map(w => `\\b${escapeRegex(w)}\\b`)
   ];
   const combinedRegex = new RegExp(`(${allPatterns.join("|")})`, "gi");
 
+  // loop through text nodes and wrap matches, skip if inside code/pre tags to avoid breaking formatting
   textNodes.forEach(node => {
     if (node.parentElement?.closest("code, pre")) return;
 
@@ -272,7 +271,7 @@ function highlight(element) {
       const span = document.createElement("span");
       span.innerHTML = originalText.replace(
         combinedRegex,
-        match => `<span style="${HIGHLIGHT_STYLE}">${match}</span>`
+        match => `<span style="${HIGHLIGHT_TEXT}">${match}</span>`
       );
       node.parentNode.replaceChild(span, node);
     }
@@ -281,9 +280,7 @@ function highlight(element) {
   element.dataset.highlighted = "true";
 }
 
-/* -----------------------------
-   SCAN & OBSERVE
------------------------------ */
+// main scanning function, processes each user message and updates storage + highlights
 function processMessage(msg) {
   if (msg.dataset.scanned) return;
 
@@ -297,20 +294,24 @@ function processMessage(msg) {
   msg.dataset.scanned = "true";
 }
 
+// initial scan and setup mutation observer for dynamic content
 function scan() {
   const userMessages = document.querySelectorAll('[data-message-author-role="user"]');
   userMessages.forEach(processMessage);
 }
 
+// debounce the scan function to avoid excessive processing during rapid DOM changes (like loading new messages)
 let debounceTimer;
 const observer = new MutationObserver(() => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(scan, 300);
 });
 
+// observe the entire body for changes (can be optimized to specific containers, if needed)
 observer.observe(document.body, { childList: true, subtree: true });
 scan();
 
+// cleanup session data on tab close to prevent old data when user returns later
 window.addEventListener("beforeunload", () => {
   chrome.storage.local.remove("activeSession");
 });
